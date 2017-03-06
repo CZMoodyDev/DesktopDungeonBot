@@ -8,21 +8,20 @@ Usage:
 -Used with 1.5 Windowed mod on a 1920x1080 screen
 """
 
-from PIL import Image, ImageChops, ImageGrab, ImageOps, ImageFilter
+from PIL import ImageGrab, ImageOps, Image
 import win32api, win32con
-import pytesseract
 from numpy import *
 import numpy as np
 import cv2
 import time
-
-pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files (x86)/Tesseract-OCR/tesseract'
+from ScreenCaster import screenCast
+from threading import Thread
 
 # User-set Globals
 # -----------
 x_pad = 8 #Pixels from left side of screen to first top-left pixel of game window
 y_pad = 29 #Pixels from top of screen to first top-left pixel
-number_of_runs = 10
+number_of_runs = 4
 prep_cost = 0
 gold_brought_in = 27
 bwThresh = 128 #Threshold for Black/White conversion of Gold counter
@@ -32,7 +31,7 @@ bwThresh = 128 #Threshold for Black/White conversion of Gold counter
 tileIndex = {} #Keeps bad coordinates from being processed
 queue = [] #Keeps coordinates to be processed
 seen = {} #Manages coordinates already processed
-allowedClicks = [24445, 24335, 24590, 24661, 24801, 24806] #This is the image averages of a subsection of the conversion bar
+allowedClicks = [24445, 24335, 24480, 24590, 24661, 24801, 24806] #This is the image averages of a subsection of the conversion bar
 firstMove = True
 blackSpaceAvg = 900
 original_spot = '' #Starting point
@@ -48,13 +47,19 @@ goldTens = (x_pad + 921, y_pad + 165, x_pad + 935, y_pad + 191)
 goldOnes = (x_pad + 935, y_pad + 165, x_pad + 950, y_pad + 191)
 conversionBar = (x_pad + 969, y_pad + 775,x_pad + 1085, y_pad + 797)
 
-
 # Screen point constants
 # ------------
 retireTab = (x_pad + 1095, y_pad + 845)
 retireButton = (x_pad + 1071, y_pad + 782)
-restartButton = (x_pad + 814, y_pad + 818)
+continueButton = (x_pad + 1009, y_pad + 840)
 mainTab = (x_pad + 998, y_pad + 840)
+nodeTavern = (x_pad + 579, y_pad + 543)
+offPrompts = (x_pad + 43, y_pad + 459)
+denOfDanger = (x_pad + 279, y_pad + 363)
+selectDenOfDanger = (x_pad + 1055, y_pad + 744)
+raceChooseGoblin = (x_pad + 696, y_pad + 141)
+classChooseTinker = (x_pad + 249, y_pad + 523)
+playButton = (x_pad + 1116, y_pad + 738)
 
 def findChar():
     simpleSaveGrab(gameScreen, 'main.png')
@@ -75,7 +80,7 @@ def findImage(needle, haystack):
     template = cv2.imread(needle)
 
     res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
-    threshold = .8
+    threshold = .6
     loc = np.where(res >= threshold)
     return (loc[0], loc[1])
 
@@ -83,16 +88,30 @@ def simpleSaveGrab(box, imgName):
     im = ImageGrab.grab(box)
     im.save(imgName)
 
+def simpleBWGrab(box, imgName):
+    im = ImageGrab.grab(box)
+    gray = im.convert('L')
+    bw = np.asarray(gray).copy()
+
+    bw[bw < 128] = 0  # Black
+    bw[bw >= 128] = 255  # White
+    imfile = Image.fromarray(bw)
+    imfile.save(imgName)
+
 def readGold():
-    simpleSaveGrab(goldHundreds, 'goldHundreds.png')
-    simpleSaveGrab(goldTens, 'goldTens.png')
-    simpleSaveGrab(goldOnes, 'goldOnes.png')
+    simpleBWGrab(goldHundreds, 'goldHundreds.png')
+    simpleBWGrab(goldTens, 'goldTens.png')
+    simpleBWGrab(goldOnes, 'goldOnes.png')
+    try:
+        ones = readGoldNumber('goldOnes.png')
+        tens = readGoldNumber('goldTens.png') * 10
+        hundreds = readGoldNumber('goldHundreds.png', limit=True) * 100
+        goldCount = ones + tens + hundreds
+    except TypeError:
+        print("Failure to read Gold")
+        goldCount = 27
 
-    ones = readGoldNumber('goldOnes.png')
-    tens = readGoldNumber('goldTens.png') * 10
-    hundreds = readGoldNumber('goldHundreds.png', limit=True) * 100
-
-    return ones + tens + hundreds
+    return goldCount
 
 def readGoldNumber(im, limit=False):
     if limit:
@@ -108,14 +127,6 @@ def readGoldNumber(im, limit=False):
             arrayX = res[1]
             if len(arrayX > 0):
                 return i
-
-def trim(im):
-    bg = Image.new(im.mode, im.size, im.getpixel((0,0)))
-    diff = ImageChops.difference(im, bg)
-    diff = ImageChops.add(diff, diff, 2.0, -100)
-    bbox = diff.getbbox()
-    if bbox:
-        return im.crop(bbox)
 
 def exit(gold):
     global running_avg
@@ -147,7 +158,7 @@ def exit(gold):
 
     clickElement(retireTab, .1)
     clickElement(retireButton, 3)
-    clickElement(restartButton, 3)
+    clickElement(continueButton, 3)
 
 def clickElement(element, delay):
     mousePos(element)
@@ -155,11 +166,15 @@ def clickElement(element, delay):
     time.sleep(delay)
 
 def processCoordinate(p):
-    #p is formatted as x8y8
-    p = p.split('y') #p is now (x8, 8)
-    x = p[0].split('x') #x is now (x, 8)
-    x = int(x[1]) #x is now 8
-    y = int(p[1]) #y is now 8
+    try:
+        #p is formatted as x8y8
+        p = p.split('y') #p is now (x8, 8)
+        x = p[0].split('x') #x is now (x, 8)
+        x = int(x[1]) #x is now 8
+        y = int(p[1]) #y is now 8
+    except IndexError:
+        x = 0
+        y = 0
     return (x, y)
 
 def grab():
@@ -273,9 +288,33 @@ def fullSingleRun():
     while len(queue) != 0:
         time.sleep(.01)
         processCords()
-    gold = readGold()
     time.sleep(.5)
-    exit(gold)
+    exit(readGold())
+
+def setupRun():
+    #Click off prompts
+    clickElement(offPrompts, .1)
+    clickElement(offPrompts, .1)
+    clickElement(offPrompts, .1)
+
+    #Tavern
+    clickElement(nodeTavern, .1)
+
+    #Den of Danger
+    clickElement(denOfDanger, 2)
+
+    #Select
+    clickElement(selectDenOfDanger, .1)
+
+    # Goblin
+    clickElement(raceChooseGoblin, .1)
+
+    # Tinker
+    clickElement(classChooseTinker, .1)
+
+    # Play
+    clickElement(playButton, 3)
+
 
 def reportEarnings(total):
     total_str = str(ceil(total))
@@ -285,10 +324,20 @@ def reportEarnings(total):
     gold_per_min = gold_sum / total_min
     print('Gold per minute = ' + str(floor(gold_per_min)))
 
+def captureScreenVideo():
+    dt = time.strftime("%Y%m%d-%H%M%S")
+    screenCast.screenCast(dt, gameScreen[2], gameScreen[3], 10, gameScreen)
+
 def main():
+    castScreen = input('Capture video? [y/n]: ')
+    if (castScreen == 'y'):
+        thread = Thread(target = captureScreenVideo)
+        thread.start()
     t0 = time.time() #Start Time
 
     while (run_num != number_of_runs + 1):
+    #while 1 == 1:
+        setupRun()
         fullSingleRun()
         time.sleep(3) #Maybe a 3 second sleep between runs will prevent issues
 
