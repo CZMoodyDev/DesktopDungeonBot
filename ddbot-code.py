@@ -16,12 +16,13 @@ import cv2
 import time
 from ScreenCaster import screenCast
 from threading import Thread
+from pynput import keyboard
 
 # User-set Globals
 # -----------
 x_pad = 8 #Pixels from left side of screen to first top-left pixel of game window
 y_pad = 29 #Pixels from top of screen to first top-left pixel
-number_of_runs = 4
+number_of_runs = 15
 prep_cost = 0
 gold_brought_in = 27
 bwThresh = 128 #Threshold for Black/White conversion of Gold counter
@@ -38,6 +39,7 @@ original_spot = '' #Starting point
 running_avg = 0
 run_num = 1
 gold_sum = 0
+escaped = 0
 
 # Image box constants
 # ------------
@@ -56,6 +58,7 @@ mainTab = (x_pad + 998, y_pad + 840)
 nodeTavern = (x_pad + 579, y_pad + 543)
 offPrompts = (x_pad + 43, y_pad + 459)
 denOfDanger = (x_pad + 279, y_pad + 363)
+shiftingPassages = (x_pad + 564, y_pad + 257)
 selectDenOfDanger = (x_pad + 1055, y_pad + 744)
 raceChooseGoblin = (x_pad + 696, y_pad + 141)
 classChooseTinker = (x_pad + 249, y_pad + 523)
@@ -134,7 +137,6 @@ def exit(gold):
     global run_num
 
     starting_point = original_spot
-    print('Going back to ' + starting_point)
 
     coordinates = processCoordinate(starting_point)
     x = coordinates[0]
@@ -191,6 +193,8 @@ def makeMap():
 
 def processCords():
     global firstMove
+    global escaped
+
     cord = queue.pop()
     seen[cord] = 'y'
 
@@ -328,24 +332,54 @@ def captureScreenVideo():
     dt = time.strftime("%Y%m%d-%H%M%S")
     screenCast.screenCast(dt, gameScreen[2], gameScreen[3], 10, gameScreen)
 
+def keyboardListenerInit():
+    # Collect events until released
+    with keyboard.Listener(
+            on_press=on_press,
+            on_release=on_release) as listener:
+        listener.join()
+
 def main():
     castScreen = input('Capture video? [y/n]: ')
-    if (castScreen == 'y'):
+    perpetual = input('Perpetual runs? [y/n]: ')
+    listener_thread = Thread(target = keyboardListenerInit)
+    listener_thread.start()
+    if perpetual == 'y':
+        run_time = 1
+        print("Press any key to interrupt run...")
+    else:
+        number_of_runs = int(input('How many runs?: '))
+        run_time = run_num != number_of_runs + 1
+
+    if castScreen == 'y':
         thread = Thread(target = captureScreenVideo)
         thread.start()
     t0 = time.time() #Start Time
 
-    while (run_num != number_of_runs + 1):
-    #while 1 == 1:
-        setupRun()
-        fullSingleRun()
-        time.sleep(3) #Maybe a 3 second sleep between runs will prevent issues
-
+    while run_time:
+        if not escaped:
+            setupRun()
+            fullSingleRun()
+            time.sleep(3) #Maybe a 3 second sleep between runs will prevent issues
+        else:
+            break
     t1 = time.time() #End Time
     total = t1 - t0
     reportEarnings(total)
     pass
 
+def on_press(key):
+    global escaped
+    try:
+        escaped = 1
+        print("Run interrupted. Finishing current run before ending...")
+    except AttributeError:
+        print('special key {0} pressed'.format(
+            key))
+
+def on_release(key):
+    if escaped == 1:
+        return False
 
 if __name__ == '__main__':
     main()
