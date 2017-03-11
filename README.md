@@ -40,5 +40,5 @@ The bot comes with some reporting tools built in. Namely, the most intuitive way
 * Introduce a Den of Danger farming mode that focuses on killing the boss - Version 2
 
 ### Version 1 Video
-I'll upload it soon with narration and stats
+https://www.youtube.com/watch?v=04jKrCTWsSQ
 
