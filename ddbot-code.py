@@ -22,7 +22,7 @@ from pynput import keyboard
 # -----------
 x_pad = 8 #Pixels from left side of screen to first top-left pixel of game window
 y_pad = 29 #Pixels from top of screen to first top-left pixel
-number_of_runs = 15
+number_of_runs = 0
 prep_cost = 0
 gold_brought_in = 27
 bwThresh = 128 #Threshold for Black/White conversion of Gold counter
@@ -40,6 +40,7 @@ running_avg = 0
 run_num = 1
 gold_sum = 0
 escaped = 0
+reporting = ''
 
 # Image box constants
 # ------------
@@ -136,14 +137,7 @@ def exit(gold):
     global gold_sum
     global run_num
 
-    starting_point = original_spot
-
-    coordinates = processCoordinate(starting_point)
-    x = coordinates[0]
-    y = coordinates[1]
-
-    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
-    leftClick()
+    clickStart()
 
     running_avg += 1
     try:
@@ -157,7 +151,22 @@ def exit(gold):
 
     run_num += 1
     time.sleep(0.5)
+    quickExit(1)
 
+def clickStart():
+    starting_point = original_spot
+
+    coordinates = processCoordinate(starting_point)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.1)
+
+def quickExit(reporting):
+    if reporting == 0:
+        clickStart()
     clickElement(retireTab, .1)
     clickElement(retireButton, 3)
     clickElement(continueButton, 3)
@@ -293,7 +302,10 @@ def fullSingleRun():
         time.sleep(.01)
         processCords()
     time.sleep(.5)
-    exit(readGold())
+    if reporting == 'y':
+        exit(readGold())
+    else:
+        quickExit(0)
 
 def setupRun():
     #Click off prompts
@@ -342,14 +354,15 @@ def keyboardListenerInit():
 def main():
     castScreen = input('Capture video? [y/n]: ')
     perpetual = input('Perpetual runs? [y/n]: ')
-    listener_thread = Thread(target = keyboardListenerInit)
-    listener_thread.start()
+    reporting = input('Reporting? [y/n]')
+    run_time = 1
+
     if perpetual == 'y':
-        run_time = 1
         print("Press any key to interrupt run...")
+        listener_thread = Thread(target=keyboardListenerInit)
+        listener_thread.start()
     else:
         number_of_runs = int(input('How many runs?: '))
-        run_time = run_num != number_of_runs + 1
 
     if castScreen == 'y':
         thread = Thread(target = captureScreenVideo)
@@ -361,11 +374,17 @@ def main():
             setupRun()
             fullSingleRun()
             time.sleep(3) #Maybe a 3 second sleep between runs will prevent issues
+            number_of_runs = max(number_of_runs - 1, 0)
+            if (number_of_runs == 0):
+                run_time = 0
         else:
             break
-    t1 = time.time() #End Time
-    total = t1 - t0
-    reportEarnings(total)
+
+    if reporting == 'y':
+        t1 = time.time()  # End Time
+        total = t1 - t0
+        reportEarnings(total)
+
     pass
 
 def on_press(key):
