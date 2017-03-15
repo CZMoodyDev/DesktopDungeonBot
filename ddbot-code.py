@@ -10,6 +10,7 @@ Usage:
 
 from PIL import ImageGrab, ImageOps, Image
 import win32api, win32con
+import pytesseract
 from numpy import *
 import numpy as np
 import cv2
@@ -17,6 +18,8 @@ import time
 from ScreenCaster import screenCast
 from threading import Thread
 from pynput import keyboard
+
+pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files (x86)/Tesseract-OCR/tesseract'
 
 # User-set Globals
 # -----------
@@ -32,6 +35,8 @@ bwThresh = 128 #Threshold for Black/White conversion of Gold counter
 tileIndex = {} #Keeps bad coordinates from being processed
 queue = [] #Keeps coordinates to be processed
 seen = {} #Manages coordinates already processed
+wasSteppable = {} #Manages tiles stepped on for next phase of the run
+wallList = {} #Manages walls seen
 allowedClicks = [24445, 24335, 24480, 24590, 24661, 24801, 24806] #This is the image averages of a subsection of the conversion bar
 firstMove = True
 blackSpaceAvg = 900
@@ -41,14 +46,21 @@ run_num = 1
 gold_sum = 0
 escaped = 0
 reporting = ''
+transmute_scroll_count = 2
+subdungeon_start = ''
+subdungeon_tileIndex = {}
+subdungeon_seen = {}
+subQueue = []
 
 # Image box constants
 # ------------
 gameScreen = (x_pad + 1, y_pad + 1, x_pad + 1199, y_pad + 899)
+gameScreenSansSide = (x_pad + 1, y_pad + 1, x_pad + 871, y_pad + 899)
 goldHundreds = (x_pad + 907, y_pad + 165, x_pad + 921, y_pad + 191)
 goldTens = (x_pad + 921, y_pad + 165, x_pad + 935, y_pad + 191)
 goldOnes = (x_pad + 935, y_pad + 165, x_pad + 950, y_pad + 191)
 conversionBar = (x_pad + 969, y_pad + 775,x_pad + 1085, y_pad + 797)
+priceTag = (x_pad + 993, y_pad + 564, x_pad + 1014, y_pad + 581)
 
 # Screen point constants
 # ------------
@@ -64,6 +76,15 @@ selectDenOfDanger = (x_pad + 1055, y_pad + 744)
 raceChooseGoblin = (x_pad + 696, y_pad + 141)
 classChooseTinker = (x_pad + 249, y_pad + 523)
 playButton = (x_pad + 1116, y_pad + 738)
+firstTransmute = (x_pad + 1036, y_pad + 458)
+secondScroll = (x_pad + 1090, y_pad + 458)
+thirdScroll = (x_pad + 1150, y_pad + 458)
+bigslotsix = (x_pad + 1036, y_pad + 730)
+bigslotfive = (x_pad + 1036, y_pad + 675)
+bigslotfour = (x_pad + 1036, y_pad + 618)
+bigslotthree = (x_pad + 1036, y_pad + 566)
+littleSlot = (x_pad + 1036, y_pad + 511)
+
 
 def findChar():
     simpleSaveGrab(gameScreen, 'main.png')
@@ -147,6 +168,7 @@ def exit(gold):
 
     gold_sum += t_gold
     avg = gold_sum / running_avg
+
     print('Run#' + str(run_num) + ' Haul = ' + str(t_gold) + ' Sum = ' + str(gold_sum) + ' Average = ' + str(avg))
 
     run_num += 1
@@ -196,9 +218,12 @@ def grab():
     return a
 
 def makeMap():
+    temp_map = {}
     for i in range(0, 20):
         for j in range(0, 20):
-            tileIndex['x' + str(i) + 'y' + str(j)] = ''
+            temp_map['x' + str(i) + 'y' + str(j)] = ''
+
+    return temp_map
 
 def processCords():
     global firstMove
@@ -218,9 +243,11 @@ def processCords():
         firstMove = False
         leftClick()
         time.sleep(.05)
-        clickElement(mainTab, .1)
-
+        clickElement(mainTab, .11)
+        wallList["x" + str(x) + "y" + str(y)] = ""
         if lookForChar(x, y):
+            wasSteppable["x" + str(x) + "y" + str(y)] = ""
+            wallList.pop("x" + str(x) + "y" + str(y), None)
             clickElement(mainTab, .1)  # In case of boss discovery
             cord_n = 'x' + str(x) + 'y' + str(y - 1)
             cord_ne = 'x' + str(x + 1) + 'y' + str(y - 1)
@@ -238,6 +265,258 @@ def processCords():
                     if i in tileIndex:
                         if i not in queue:
                             queue.append(i)
+
+def lootSubdungeons():
+    exploredDungeons = 0
+    openHiddenSubdungeons()
+    visibleSubs = locateSubdungeons('images/subDungeon.png')
+    while exploredDungeons < len(visibleSubs):
+        enterSubdungeon(visibleSubs[exploredDungeons])
+
+        exploredDungeons = exploredDungeons + 1
+
+def enterSubdungeon(cord):
+    global subdungeon_start
+    global subdungeon_tileIndex
+    global subdungeon_seen
+    global subQueue
+
+    coordinates = processCoordinate(cord)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.01)
+    leftClick()
+    time.sleep(.5)
+
+    clickElement(mainTab, .11)
+
+    subdungeon_start = findChar()
+    subdungeon_tileIndex = makeMap()
+    subdungeon_seen = {}
+    subQueue = []
+
+    if subdungeon_start == 'Could not locate character':
+        while subdungeon_start == 'Could not locate character':
+            subdungeon_start = findChar()
+
+    if lookForGold('images/goldpile1.png') or lookForGold('images/goldpile2.png'):
+        subQueue.append(subdungeon_start)
+
+        while len(subQueue) != 0:
+            time.sleep(.01)
+            processSubCords()
+        time.sleep(.5)
+
+    exitSubdungeon()
+
+def exitSubdungeon():
+    coordinates = processCoordinate(subdungeon_start)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.01)
+    leftClick()
+    time.sleep(.5)
+
+
+def processSubCords():
+    cord = subQueue.pop()
+    subdungeon_seen[cord] = 'y'
+
+    coordinates = processCoordinate(cord)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    time.sleep(.15)
+
+    if isClickable():
+        leftClick()
+        time.sleep(.05)
+        clickElement(mainTab, .11)
+        if lookForChar(x, y):
+            clickElement(mainTab, .1)  # In case of sign discovery
+            cord_n = 'x' + str(x) + 'y' + str(y - 1)
+            cord_ne = 'x' + str(x + 1) + 'y' + str(y - 1)
+            cord_e = 'x' + str(x + 1) + 'y' + str(y)
+            cord_se = 'x' + str(x + 1) + 'y' + str(y + 1)
+            cord_s = 'x' + str(x) + 'y' + str(y + 1)
+            cord_sw = 'x' + str(x - 1) + 'y' + str(y + 1)
+            cord_w  = 'x' + str(x - 1) + 'y' + str(y)
+            cord_nw = 'x' + str(x - 1) + 'y' + str(y - 1)
+
+            cords_to_check = [cord_n, cord_ne, cord_e, cord_se, cord_s, cord_sw, cord_w, cord_nw]
+
+            for i in cords_to_check:
+                if i not in subdungeon_seen:
+                    if i in subdungeon_tileIndex:
+                        if i not in subQueue:
+                            subQueue.append(i)
+
+def openHiddenSubdungeons():
+    hiddenSubs = locateSubdungeons('images/hiddenDungeon.png')
+    tryCounter = 0
+
+    if len(hiddenSubs) > 0:
+        while not tryCounter == len(hiddenSubs):
+            hiddenCords = processCoordinate(hiddenSubs[tryCounter])
+
+            tryCounter = tryCounter + 1
+            x = hiddenCords[0]
+            y = hiddenCords[1]
+            cord_n = 'x' + str(x) + 'y' + str(y - 1)
+            cord_ne = 'x' + str(x + 1) + 'y' + str(y - 1)
+            cord_e = 'x' + str(x + 1) + 'y' + str(y)
+            cord_se = 'x' + str(x + 1) + 'y' + str(y + 1)
+            cord_s = 'x' + str(x) + 'y' + str(y + 1)
+            cord_sw = 'x' + str(x - 1) + 'y' + str(y + 1)
+            cord_w = 'x' + str(x - 1) + 'y' + str(y)
+            cord_nw = 'x' + str(x - 1) + 'y' + str(y - 1)
+
+            cords_to_check = [cord_n, cord_ne, cord_e, cord_se, cord_s, cord_sw, cord_w, cord_nw]
+
+            for i in cords_to_check:
+                if i in seen:
+                    if i in wallList:
+                        tryCounter = len(hiddenSubs)
+                        transmuteWall(i)
+                        time.sleep(1) #Sleep needed or the search for a subdungeon is too fast
+                        break;
+
+    else:
+        print("No hidden subdungeons reachable")
+
+
+def transmuteWall(cord):
+    global transmute_scroll_count
+    transmute_scroll_count = transmute_scroll_count - 1
+
+    clickElement(firstTransmute, 1)
+
+    coordinates = processCoordinate(cord)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    wallList.pop("x" + str(x) + "y" + str(y), None)
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.5)
+    leftClick()
+    time.sleep(.5)
+    leftClick()
+    time.sleep(.1)
+
+def locateSubdungeons(img):
+    dungeonLocations = {}
+
+    simpleSaveGrab(gameScreen, 'main.png')
+    img_rgb = cv2.imread('main.png')
+    template = cv2.imread(img)
+
+    res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
+    threshold = .95
+    loc = np.where(res >= threshold)
+    for pt in zip(*loc[::-1]):  # Switch collumns and rows
+        r_string = 'x' + str(int(floor((pt[0] + 15) / 45))) + 'y' + str(int(floor((pt[1] + 15) / 45)))
+        dungeonLocations[r_string] = 0
+
+    return_cords = []
+
+    for key in dungeonLocations:
+        return_cords.append(key)
+
+    return return_cords
+
+def lookForGold(img):
+    found = False
+    simpleSaveGrab(gameScreenSansSide, 'main.png')
+    img_rgb = cv2.imread('main.png')
+    template = cv2.imread(img)
+
+    res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
+    threshold = .9
+    loc = np.where(res >= threshold)
+    for pt in zip(*loc[::-1]):  # Switch columns and rows
+        found = True
+
+    return found
+
+def findShops():
+
+    shop_queue = locateSubdungeons('images/shop.png')
+
+    if len(shop_queue) > 0:
+        best_shop_cords = ''
+        best_shop_price = 0
+
+        while len(shop_queue) > 0:
+            shop_check = shop_queue.pop()
+
+            coordinates = processCoordinate(shop_check)
+            x = coordinates[0]
+            y = coordinates[1]
+
+            mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+            leftClick()
+            time.sleep(.5)
+
+            try:
+                price = int(readPriceTag())
+            except ValueError:
+                price = 0
+
+            if price > 10:
+                if price > best_shop_price:
+                    best_shop_cords = shop_check
+                    best_shop_price = price
+
+            time.sleep(1)
+
+        if best_shop_cords != '':
+            stealItem(best_shop_cords)
+
+
+def stealItem(cords):
+    coordinates = processCoordinate(cords)
+    x = coordinates[0]
+    y = coordinates[1]
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.1)
+    clickElement(mainTab, .2)
+
+    if transmute_scroll_count == 2:
+        scrollspot = thirdScroll
+    else:
+        scrollspot = secondScroll
+
+    clickElement(scrollspot, .3)
+
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    leftClick()
+    time.sleep(.3)
+
+    clickElement(firstTransmute, .1)
+    clickElement(bigslotsix, .1)
+    clickElement(bigslotfive, .1)
+    clickElement(bigslotfour, .1)
+    clickElement(bigslotthree, .1)
+    clickElement(littleSlot, .1)
+
+
+def readPriceTag():
+    simpleSaveGrab(priceTag, 'priceTag.png')
+
+    text = pytesseract.image_to_string(Image.open('priceTag.png'))
+
+    return text
+
 
 def lookForChar(x, y):
     x_n = x_pad + (x * 45)
@@ -289,9 +568,11 @@ def fullSingleRun():
     global original_spot
     global firstMove
     global seen
+    global tileIndex
+
     firstMove = True
 
-    makeMap()
+    tileIndex = makeMap()
     seen = {}
     time.sleep(1)
 
@@ -302,10 +583,28 @@ def fullSingleRun():
         time.sleep(.01)
         processCords()
     time.sleep(.5)
+
+    lootSubdungeons()
+    time.sleep(.1)
+    findShops()
+    useUpTransmutes()
+
     if reporting == 'y':
         exit(readGold())
     else:
         quickExit(0)
+
+def useUpTransmutes():
+    wall_queue = []
+    for i in wallList:
+        if len(wall_queue) < transmute_scroll_count:
+            wall_queue.append(i)
+        else:
+            break;
+
+    for x in wall_queue:
+        transmuteWall(x)
+        time.sleep(.1)
 
 def setupRun():
     #Click off prompts
@@ -335,7 +634,7 @@ def setupRun():
 def reportEarnings(total):
     total_str = str(ceil(total))
     print('Done in ' + total_str + 's')
-    print('Average run: ' + str(ceil(total / number_of_runs)) + 's')
+    print('Average run: ' + str(ceil(total / run_num)) + 's')
     total_min = total / 60
     gold_per_min = gold_sum / total_min
     print('Gold per minute = ' + str(floor(gold_per_min)))
@@ -352,13 +651,16 @@ def keyboardListenerInit():
         listener.join()
 
 def main():
+    global number_of_runs
+    global reporting
     castScreen = input('Capture video? [y/n]: ')
     perpetual = input('Perpetual runs? [y/n]: ')
-    reporting = input('Reporting? [y/n]')
+    reporting = input('Reporting? [y/n]: ')
     run_time = 1
 
     if perpetual == 'y':
         print("Press any key to interrupt run...")
+        run_time = 100
         listener_thread = Thread(target=keyboardListenerInit)
         listener_thread.start()
     else:
@@ -375,7 +677,7 @@ def main():
             fullSingleRun()
             time.sleep(3) #Maybe a 3 second sleep between runs will prevent issues
             number_of_runs = max(number_of_runs - 1, 0)
-            if (number_of_runs == 0):
+            if (number_of_runs == 0 and run_time == 1):
                 run_time = 0
         else:
             break
@@ -402,3 +704,4 @@ def on_release(key):
 
 if __name__ == '__main__':
     main()
+    pass
