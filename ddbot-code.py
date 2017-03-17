@@ -37,7 +37,8 @@ queue = [] #Keeps coordinates to be processed
 seen = {} #Manages coordinates already processed
 wasSteppable = {} #Manages tiles stepped on for next phase of the run
 wallList = {} #Manages walls seen
-allowedClicks = [24445, 24335, 24480, 24590, 24661, 24801, 24806] #This is the image averages of a subsection of the conversion bar
+allowedClicks = [24445, 24335, 24480, 24590, 24661, 24801, 24806, 25556] #This is the image averages of a subsection of the conversion bar
+gameFailureAverage = 2552
 firstMove = True
 blackSpaceAvg = 900
 original_spot = '' #Starting point
@@ -160,16 +161,14 @@ def exit(gold):
 
     clickStart()
 
-    running_avg += 1
     try:
         t_gold = int(gold) - (prep_cost + gold_brought_in)
+        running_avg += 1
+        gold_sum += t_gold
+        avg = gold_sum / running_avg
+        print('Run#' + str(run_num) + ' Haul = ' + str(t_gold) + ' Sum = ' + str(gold_sum) + ' Average = ' + str(avg))
     except ValueError:
-        t_gold = 0 #Sometimes Tesseract doesn't read well
-
-    gold_sum += t_gold
-    avg = gold_sum / running_avg
-
-    print('Run#' + str(run_num) + ' Haul = ' + str(t_gold) + ' Sum = ' + str(gold_sum) + ' Average = ' + str(avg))
+        print("No gold added to average")
 
     run_num += 1
     time.sleep(0.5)
@@ -388,15 +387,14 @@ def openHiddenSubdungeons():
                         time.sleep(1) #Sleep needed or the search for a subdungeon is too fast
                         break;
 
-    else:
-        print("No hidden subdungeons reachable")
 
 
 def transmuteWall(cord):
     global transmute_scroll_count
+    global wallList
     transmute_scroll_count = transmute_scroll_count - 1
 
-    clickElement(firstTransmute, 1)
+    #clickElement(firstTransmute, 1)
 
     coordinates = processCoordinate(cord)
     x = coordinates[0]
@@ -404,10 +402,9 @@ def transmuteWall(cord):
 
     wallList.pop("x" + str(x) + "y" + str(y), None)
     mousePos((x_pad + (x * 45), y_pad + (y * 45)))
-    leftClick()
+    dragUp((x_pad + (x * 45), y_pad + (y * 45)))
     time.sleep(.5)
-    leftClick()
-    time.sleep(.5)
+    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
     leftClick()
     time.sleep(.1)
 
@@ -481,33 +478,48 @@ def findShops():
             stealItem(best_shop_cords)
 
 
+    clickElement(mainTab, .2)
+
+
+
 def stealItem(cords):
+    global transmute_scroll_count
     coordinates = processCoordinate(cords)
     x = coordinates[0]
     y = coordinates[1]
 
+    clickStart()
     mousePos((x_pad + (x * 45), y_pad + (y * 45)))
-    leftClick()
-    time.sleep(.1)
+    dragUp((x_pad + (x * 45), y_pad + (y * 45)))
+
+    #leftClick()
+    #time.sleep(.1)
     clickElement(mainTab, .2)
 
-    if transmute_scroll_count == 2:
-        scrollspot = thirdScroll
-    else:
-        scrollspot = secondScroll
+    #if transmute_scroll_count == 2:
+    #    scrollspot = thirdScroll
+    #else:
+    #    scrollspot = secondScroll
 
-    clickElement(scrollspot, .3)
+    #clickElement(scrollspot, .3)
 
-    mousePos((x_pad + (x * 45), y_pad + (y * 45)))
-    leftClick()
-    time.sleep(.3)
+    #mousePos((x_pad + (x * 45), y_pad + (y * 45)))
+    #leftClick()
+    #time.sleep(.3)
 
-    clickElement(firstTransmute, .1)
+    clickElement(firstTransmute, .2)
+    transmute_scroll_count = transmute_scroll_count - 1
     clickElement(bigslotsix, .1)
     clickElement(bigslotfive, .1)
     clickElement(bigslotfour, .1)
     clickElement(bigslotthree, .1)
     clickElement(littleSlot, .1)
+    if transmute_scroll_count == 0:
+        clickElement(thirdScroll, .1)
+    if transmute_scroll_count == 1:
+        clickElement(secondScroll, .1)
+    rightClick()
+    time.sleep(.1)
 
 
 def readPriceTag():
@@ -555,6 +567,19 @@ def leftClick():
     time.sleep(.1)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
 
+def rightClick():
+    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0)
+    time.sleep(.1)
+    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0)
+
+def dragUp(cord):
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0)
+    time.sleep(2)
+
+    win32api.SetCursorPos((cord[0], max(cord[1] - 80, 30)))
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0)
+    time.sleep(.1)
+
 def mousePos(cord):
     win32api.SetCursorPos((x_pad + cord[0], y_pad + cord[1]))
 
@@ -569,12 +594,15 @@ def fullSingleRun():
     global firstMove
     global seen
     global tileIndex
-
+    global transmute_scroll_count
+    global wallList
+    transmute_scroll_count = 2
     firstMove = True
 
     tileIndex = makeMap()
     seen = {}
     time.sleep(1)
+    wallList = {}
 
     original_spot = findChar()
     queue.append(original_spot)
@@ -588,7 +616,9 @@ def fullSingleRun():
     time.sleep(.1)
     findShops()
     useUpTransmutes()
-
+    time.sleep(2)
+    rightClick()
+    time.sleep(.1)
     if reporting == 'y':
         exit(readGold())
     else:
@@ -604,7 +634,7 @@ def useUpTransmutes():
 
     for x in wall_queue:
         transmuteWall(x)
-        time.sleep(.1)
+        time.sleep(1)
 
 def setupRun():
     #Click off prompts
